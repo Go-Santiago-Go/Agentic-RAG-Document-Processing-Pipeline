@@ -1,0 +1,30 @@
+# Private planning & learning docs
+CLAUDE.local.md
+BUILD_PLAN.md
+DESIGN.md
+
+# content drafts
+content/
+
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfvars
+!*.tfvars.example
+# .terraform.lock.hcl is intentionally committed — it pins provider versions
+
+# Go
+api/bin/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+.env
+
+# macOS / editors
+.DS_Store
+.idea/
+.vscode/

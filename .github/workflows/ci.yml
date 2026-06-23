@@ -1,0 +1,120 @@
+name: Agentic-RAG CI
+
+# Runs on every push and PR to main, plus manual triggers.
+# Validates Terraform, builds the Go API, and runs Python pipeline/agent tests.
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch: # allows manual runs from the Actions tab
+
+# id-token:write lets the runner request a GitHub OIDC JWT so it can call
+# sts:AssumeRoleWithWebIdentity — no long-lived AWS keys stored as secrets.
+# contents:read is the minimum needed for actions/checkout.
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  # ── Terraform ────────────────────────────────────────────────────────────────
+  # Validates infrastructure code only — no apply. Runs fmt-check so formatting
+  # issues are caught before review, then validate to catch provider/schema errors.
+  terraform:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Exchanges the GitHub OIDC JWT for short-lived AWS credentials by assuming
+      # the IAM role created in infra/bootstrap. The role ARN is stored as a
+      # repository secret — never hardcoded. Credentials are injected as
+      # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_SESSION_TOKEN env vars
+      # that every subsequent step in this job inherits automatically.
+      - name: Configure AWS Credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      # -recursive checks all subdirectories; -check exits non-zero without writing
+      # so CI fails fast rather than silently fixing formatting on the runner.
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive
+        working-directory: infra
+
+      # Init downloads the AWS provider and connects to the S3 remote backend.
+      # AWS credentials (from the OIDC step above) are required to access the bucket.
+      - name: Terraform Init
+        run: terraform init
+        working-directory: infra/envs/dev
+
+      # Validate checks HCL syntax and provider schema without making API calls,
+      # so it catches type errors and missing required fields before any apply.
+      - name: Terraform Validate
+        run: terraform validate
+        working-directory: infra/envs/dev
+
+  # ── Go API ───────────────────────────────────────────────────────────────────
+  # Builds and tests the Go Lambda code in api/. No AWS credentials needed —
+  # these checks are purely local and run in parallel with the other jobs.
+  go:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # go-version-file pins the Go version to whatever is declared in api/go.mod,
+      # so the runner always matches the local development toolchain.
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: api/go.mod
+
+      - name: Build
+        run: go build ./...
+        working-directory: api
+
+      - name: Vet
+        run: go vet ./...
+        working-directory: api
+
+      - name: Test
+        run: go test ./...
+        working-directory: api
+
+  # ── Python pipeline / agent ──────────────────────────────────────────────────
+  # Lints and tests the Python Step Functions tasks and agent code.
+  # ruff is used for both linting and formatting checks (replaces flake8 + black).
+  python:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dev dependencies
+        run: pip install pytest ruff
+
+      - name: Format check
+        run: ruff format --check .
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Test
+        run: |
+          python -m pytest
+          ec=$?
+          # Exit code 5 = no tests collected — expected while pipeline code doesn't exist yet.
+          [ $ec -eq 5 ] && exit 0 || exit $ec
