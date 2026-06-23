@@ -75,6 +75,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: api/go.mod
+          cache: false
 
       - name: Build
         run: go build ./...
@@ -113,8 +114,5 @@ jobs:
         run: ruff check .
 
       - name: Test
-        run: |
-          python -m pytest
-          ec=$?
-          # Exit code 5 = no tests collected — expected while pipeline code doesn't exist yet.
-          [ $ec -eq 5 ] && exit 0 || exit $ec
+        # || bypasses bash -e so pytest's exit 5 (no tests collected) doesn't fail the job.
+        run: python -m pytest || [ $? -eq 5 ]

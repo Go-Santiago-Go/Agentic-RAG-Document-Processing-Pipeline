@@ -13,7 +13,7 @@ variable "project" {
 variable "github_org" {
   type        = string
   description = "Github username"
-  default     = "go-santiago-go"
+  default     = "Go-Santiago-Go"
 }
 
 variable "github_repo" {
